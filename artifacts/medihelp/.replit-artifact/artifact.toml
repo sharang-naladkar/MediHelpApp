@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "MediHelp"
+description = "A demo-ready emergency medical drone delivery app for Team Dronuts, with SOS dispatch, live drone tracking, delivery confirmation, incident history, offline-friendly demo mode, and a configurable FastAPI backend connection."
+version = "1.0.0"
+id = "artifacts/medihelp"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 25507
+
+[services.development]
+run = "pnpm --filter @workspace/medihelp run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/medihelp", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/medihelp", "run", "serve" ]
+
+[services.env]
+PORT = "25507"
+BASE_PATH = "/"
