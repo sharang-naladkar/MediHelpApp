@@ -11,6 +11,9 @@ MediHelp is Team Dronuts' emergency medical drone delivery demo for Smart India 
 - Emergency dialer action for 112
 - Profile preferences for notifications and Demo / Live connection mode
 - Dark mode support through the device appearance setting
+- Secure token storage on Android with refresh-token retry after a 401
+- Live WebSocket telemetry subscription with 5-second REST status polling fallback
+- Offline emergency queue that retries automatically while Live mode is selected
 
 ## Live backend configuration
 
@@ -27,11 +30,33 @@ Live mode uses these REST calls from `services/medihelpRepository.ts`:
 - `GET /user/history`
 - `POST /emergency/{incidentId}/confirm`
 
-The repository boundary is intentionally isolated so a Retrofit/MQTT-backed native build can use the same contract later. Demo mode never requires a backend or venue Wi-Fi.
+Optional live environment variables:
+
+```bash
+EXPO_PUBLIC_API_BASE_URL=https://api.medihelp.dronuts.io/v1/
+EXPO_PUBLIC_TELEMETRY_WS_URL=wss://api.medihelp.dronuts.io/v1/ws
+```
+
+The telemetry adapter subscribes to `incident/{incidentId}/status` over WebSocket. If `EXPO_PUBLIC_TELEMETRY_WS_URL` is not provided, it derives a WebSocket URL from the API base URL and still keeps REST polling active as a fallback. Demo mode never requires a backend or venue Wi-Fi.
 
 ## Google Maps and device services
 
-The first demo build uses a lightweight native map preview so it renders reliably in Expo Go. For the Android release build, add the Google Maps Android key to the Expo app configuration and replace `components/MapPreview.tsx` with `react-native-maps` using the same `Incident.location` and telemetry data. Foreground location permission is already requested through `expo-location`; Android notification and dialer permissions are declared in `app.json`.
+`components/MapPreview.tsx` now uses Google Maps on Android and a web-safe preview in the browser. Replace `REPLACE_WITH_GOOGLE_MAPS_ANDROID_KEY` in `app.json` with the Android-restricted Maps SDK key before creating the release build. The map renders the user marker, drone marker, and route polyline from telemetry.
+
+Foreground location permission is requested through `expo-location`. The Profile screen requests notification permission and registers an Android `Emergency updates` channel. Notification payloads should include:
+
+```json
+{
+  "data": {
+    "incidentId": "INC-2026-042",
+    "screen": "tracking"
+  }
+}
+```
+
+The app deep-links notification taps to tracking or delivery confirmation. Android notification, location, and dialer permissions are declared in `app.json`.
+
+On a native Android build, `registerForPushNotificationsAsync()` also requests the device token exposed by Android Firebase Cloud Messaging (`getDevicePushTokenAsync`). Send that token to the backend's notification registration endpoint when the server contract exposes it; Expo Go may only return an Expo token.
 
 ## Run
 
@@ -47,6 +72,6 @@ Preview on a physical device with Expo Go or use the Replit mobile preview.
 Use the Profile screen's Connection mode control:
 
 - **Demo** — local repository, seeded history, simulated dispatch telemetry
-- **Live** — calls `EXPO_PUBLIC_API_BASE_URL` and surfaces network failures with retry affordances
+- **Live** — calls `EXPO_PUBLIC_API_BASE_URL`, opens the telemetry WebSocket, falls back to REST polling, and queues failed emergency triggers for retry
 
 Android's final Gradle product flavors (`demo` and `prod`) should be added in the native Android project generated for the release build; the repository mode switch keeps the demo behavior available in Expo Go today.

@@ -14,6 +14,9 @@ import {
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { MediHelpProvider } from '@/context/MediHelpContext';
+import * as Notifications from 'expo-notifications';
+import { getNotificationIncidentId } from '@/services/notifications';
+import { useMediHelp } from '@/context/MediHelpContext';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -26,6 +29,22 @@ function RootLayoutNav() {
       <Stack.Screen name="index" />
     </Stack>
   );
+}
+
+function NotificationBridge() {
+  const { activeIncident, setScreen } = useMediHelp();
+
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const { incidentId, screen } = getNotificationIncidentId(response);
+      if (!incidentId || activeIncident?.incidentId === incidentId) {
+        setScreen(screen);
+      }
+    });
+    return () => subscription.remove();
+  }, [activeIncident?.incidentId, setScreen]);
+
+  return null;
 }
 
 export default function RootLayout() {
@@ -51,6 +70,7 @@ export default function RootLayout() {
           <MediHelpProvider>
             <GestureHandlerRootView style={{ flex: 1 }}>
               <KeyboardProvider>
+                <NotificationBridge />
                 <RootLayoutNav />
               </KeyboardProvider>
             </GestureHandlerRootView>

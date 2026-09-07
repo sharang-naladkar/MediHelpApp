@@ -21,6 +21,7 @@ import { MapPreview } from '@/components/MapPreview';
 import { useColors } from '@/hooks/useColors';
 import { useMediHelp } from '@/context/MediHelpContext';
 import { AppMode, Incident } from '@/services/medihelpRepository';
+import { registerForPushNotificationsAsync } from '@/services/notifications';
 
 const steps = ['Trigger', 'Location', 'Processing', 'Dispatch', 'Takeoff', 'Delivery', 'Confirmation'];
 
@@ -163,7 +164,7 @@ function AuthScreen() {
 
 function HomeScreen({ onNavigate }: { onNavigate: (screen: 'home' | 'history' | 'profile') => void }) {
   const colors = useColors();
-  const { history, activeIncident, setScreen, error, triggerEmergency } = useMediHelp();
+  const { history, activeIncident, setScreen, error, triggerEmergency, offlineQueueCount } = useMediHelp();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -186,7 +187,9 @@ function HomeScreen({ onNavigate }: { onNavigate: (screen: 'home' | 'history' | 
         <BrandHeader onProfile={() => onNavigate('profile')} />
         <View style={styles.onlineRow}>
           <View style={[styles.onlineDot, { backgroundColor: colors.primary }]} />
-          <Text style={[styles.onlineText, { color: colors.primary }]}>MediHelp network online</Text>
+          <Text style={[styles.onlineText, { color: offlineQueueCount ? colors.destructive : colors.primary }]}>
+            {offlineQueueCount ? `${offlineQueueCount} emergency${offlineQueueCount === 1 ? '' : 's'} queued offline` : 'MediHelp network online'}
+          </Text>
           <Text style={[styles.locationText, { color: colors.mutedForeground }]}>Bengaluru</Text>
         </View>
         <View style={[styles.greeting, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -300,9 +303,9 @@ function IncidentRow({ incident, onPress }: { incident: Incident; onPress?: () =
 
 function TrackingScreen() {
   const colors = useColors();
-  const { activeIncident, setScreen, confirmReceipt } = useMediHelp();
+  const { activeIncident, setScreen, confirmReceipt, telemetryLive, offlineQueueCount } = useMediHelp();
   const incident = activeIncident;
-  const progress = incident?.status === 'delivered' ? 7 : incident?.status === 'en_route' ? 5 : 3;
+  const progress = incident?.stage ?? (incident?.status === 'delivered' ? 7 : incident?.status === 'en_route' ? 5 : 3);
   if (!incident) return null;
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -318,7 +321,9 @@ function TrackingScreen() {
         <MapPreview incident={incident} />
         <View style={[styles.liveBadge, { backgroundColor: colors.secondary }]}>
           <View style={[styles.onlineDot, { backgroundColor: colors.primary }]} />
-          <Text style={[styles.liveText, { color: colors.primary }]}>{incident.status === 'delivered' ? 'Delivery complete' : 'Drone telemetry live'}</Text>
+          <Text style={[styles.liveText, { color: incident.offlineQueued ? colors.destructive : colors.primary }]}>
+            {incident.status === 'delivered' ? 'Delivery complete' : incident.offlineQueued ? 'Waiting for network' : telemetryLive ? 'Drone telemetry live' : 'REST telemetry fallback'}
+          </Text>
           <Text style={[styles.liveData, { color: colors.mutedForeground }]}>{incident.droneId} · {incident.battery}% battery</Text>
         </View>
         <View style={styles.etaRow}>
@@ -351,7 +356,14 @@ function TrackingScreen() {
             );
           })}
         </View>
-        {incident.status === 'delivered' ? (
+        {incident.offlineQueued ? (
+          <View style={[styles.statusNotice, { backgroundColor: colors.accent }]}>
+            <Feather name="wifi-off" size={16} color={colors.destructive} />
+            <Text style={[styles.statusNoticeText, { color: colors.accentForeground }]}>
+              {offlineQueueCount ? 'Queued securely. We’ll retry automatically when you reconnect.' : 'Emergency queued for delivery.'}
+            </Text>
+          </View>
+        ) : incident.status === 'delivered' ? (
           <Pressable onPress={() => void confirmReceipt()} style={({ pressed }) => [styles.primaryButton, { backgroundColor: colors.primary, opacity: pressed ? 0.75 : 1 }]}>
             <Feather name="check-circle" size={18} color="#fff" />
             <Text style={styles.primaryButtonText}>Confirm receipt</Text>
@@ -396,7 +408,19 @@ function HistoryScreen() {
 function ProfileScreen() {
   const colors = useColors();
   const { mode, setMode, logout, setScreen } = useMediHelp();
-  const [notifications, setNotifications] = useState(true);
+  const [notifications, setNotifications] = useState(false);
+  const toggleNotifications = async (enabled: boolean) => {
+    if (!enabled) {
+      setNotifications(false);
+      return;
+    }
+    try {
+      await registerForPushNotificationsAsync();
+      setNotifications(true);
+    } catch (caught) {
+      Alert.alert('Notifications are off', caught instanceof Error ? caught.message : 'Please enable notifications in Settings.');
+    }
+  };
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -413,7 +437,7 @@ function ProfileScreen() {
         </View>
         <Text style={[styles.sectionTitle, { color: colors.foreground, marginBottom: 12 }]}>Preferences</Text>
         <View style={[styles.settingsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <SettingRow icon="bell" label="Emergency notifications" color={colors.primary} right={<Switch value={notifications} onValueChange={setNotifications} trackColor={{ false: colors.muted, true: colors.primary }} />} />
+          <SettingRow icon="bell" label="Emergency notifications" color={colors.primary} right={<Switch value={notifications} onValueChange={(value) => void toggleNotifications(value)} trackColor={{ false: colors.muted, true: colors.primary }} />} />
           <SettingRow icon="map-pin" label="Saved addresses" color={colors.destructive} right={<Feather name="chevron-right" size={18} color={colors.mutedForeground} />} />
           <SettingRow icon="users" label="Emergency contacts" color={colors.primary} right={<Feather name="chevron-right" size={18} color={colors.mutedForeground} />} />
         </View>

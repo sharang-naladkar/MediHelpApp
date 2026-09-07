@@ -22,6 +22,8 @@ type MediHelpContextValue = {
   activeIncident: Incident | null;
   isLoading: boolean;
   error: string | null;
+  offlineQueueCount: number;
+  telemetryLive: boolean;
   login: (identifier: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   triggerEmergency: () => Promise<Incident>;
@@ -46,6 +48,8 @@ export function MediHelpProvider({ children }: { children: React.ReactNode }) {
   const [activeIncident, setActiveIncident] = useState<Incident | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [offlineQueueCount, setOfflineQueueCount] = useState(0);
+  const [telemetryLive, setTelemetryLive] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -65,10 +69,11 @@ export function MediHelpProvider({ children }: { children: React.ReactNode }) {
       setHistory(demoHistory);
       setError('Showing cached history. Pull to retry when you are online.');
     });
+    void repository.pendingEmergencyCount().then(setOfflineQueueCount);
   }, [mode, session]);
 
   useEffect(() => {
-    if (!activeIncident || activeIncident.status === 'delivered') return;
+    if (!activeIncident || activeIncident.status === 'delivered' || mode !== 'demo') return;
     const timer = setInterval(() => {
       setActiveIncident((current) => {
         if (!current) return current;
@@ -83,6 +88,7 @@ export function MediHelpProvider({ children }: { children: React.ReactNode }) {
           etaMinutes: Math.max(1, 8 - stages),
           battery: Math.max(48, 96 - stages * 5),
           altitude: stages >= 4 ? 118 : stages * 20,
+          stage: stages,
         };
         if (next.status === 'delivered') {
           void repository.saveIncident(next);
@@ -93,6 +99,52 @@ export function MediHelpProvider({ children }: { children: React.ReactNode }) {
     }, 1500);
     return () => clearInterval(timer);
   }, [activeIncident?.incidentId, activeIncident?.status]);
+
+  useEffect(() => {
+    if (!activeIncident || activeIncident.status === 'delivered' || mode === 'demo') {
+      setTelemetryLive(false);
+      return;
+    }
+    let disposed = false;
+    const applyStatus = (update: Partial<Incident> & { status?: Incident['status']; step?: number }) => {
+      if (disposed) return;
+      setActiveIncident((current) =>
+        current
+          ? {
+              ...current,
+              ...update,
+              stage: update.step ?? update.stage ?? current.stage,
+            }
+          : current,
+      );
+    };
+    const unsubscribe = repository.subscribeToIncident(activeIncident.incidentId, applyStatus);
+    setTelemetryLive(true);
+    const poll = setInterval(() => {
+      void repository
+        .getIncidentStatus(activeIncident.incidentId)
+        .then(applyStatus)
+        .catch(() => setTelemetryLive(false));
+    }, 5000);
+    return () => {
+      disposed = true;
+      unsubscribe();
+      clearInterval(poll);
+      setTelemetryLive(false);
+    };
+  }, [activeIncident?.incidentId, activeIncident?.status, mode]);
+
+  useEffect(() => {
+    if (!session || mode !== 'prod') return;
+    const drain = () => {
+      void repository.drainEmergencyQueue(mode).then(() => {
+        void repository.pendingEmergencyCount().then(setOfflineQueueCount);
+      });
+    };
+    drain();
+    const timer = setInterval(drain, 15000);
+    return () => clearInterval(timer);
+  }, [session, mode]);
 
   const setMode = async (nextMode: AppMode) => {
     setModeState(nextMode);
@@ -142,7 +194,16 @@ export function MediHelpProvider({ children }: { children: React.ReactNode }) {
       altitude: 0,
       delivery: 'Emergency medical kit',
     };
-    const submitted = await repository.triggerEmergency(incident, mode);
+    let submitted = incident;
+    try {
+      submitted = await repository.triggerEmergency(incident, mode);
+    } catch (caught) {
+      if (mode !== 'prod') throw caught;
+      await repository.queueEmergency(incident);
+      setOfflineQueueCount((count) => count + 1);
+      setError('You are offline. The emergency is queued and will retry automatically.');
+      submitted = { ...incident, offlineQueued: true };
+    }
     setActiveIncident(submitted);
     setScreen('tracking');
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -180,13 +241,15 @@ export function MediHelpProvider({ children }: { children: React.ReactNode }) {
       activeIncident,
       isLoading,
       error,
+      offlineQueueCount,
+      telemetryLive,
       login,
       logout,
       triggerEmergency,
       confirmReceipt,
       retryHistory,
     }),
-    [session, mode, screen, history, activeIncident, isLoading, error],
+    [session, mode, screen, history, activeIncident, isLoading, error, offlineQueueCount, telemetryLive],
   );
 
   return <MediHelpContext.Provider value={value}>{children}</MediHelpContext.Provider>;

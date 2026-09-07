@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 export type AppMode = 'demo' | 'prod';
 
@@ -19,10 +21,13 @@ export type Incident = {
   battery: number;
   altitude: number;
   delivery?: string;
+  stage?: number;
+  offlineQueued?: boolean;
 };
 
 const HISTORY_KEY = '@medihelp/history';
 const TOKEN_KEY = '@medihelp/token';
+const PENDING_QUEUE_KEY = '@medihelp/pending-emergencies';
 
 const demoHistory: Incident[] = [
   {
@@ -53,15 +58,29 @@ const demoHistory: Incident[] = [
   },
 ];
 
-async function request<T>(
+async function getToken() {
+  if (Platform.OS === 'web') return AsyncStorage.getItem(TOKEN_KEY);
+  return SecureStore.getItemAsync(TOKEN_KEY);
+}
+
+async function setToken(value: string) {
+  if (Platform.OS === 'web') {
+    await AsyncStorage.setItem(TOKEN_KEY, value);
+    return;
+  }
+  await SecureStore.setItemAsync(TOKEN_KEY, value);
+}
+
+async function rawRequest<T>(
   path: string,
   init: RequestInit = {},
+  tokenOverride?: string | null,
 ): Promise<T> {
   const baseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
   if (!baseUrl) {
     throw new Error('No production API base URL configured.');
   }
-  const token = await AsyncStorage.getItem(TOKEN_KEY);
+  const token = tokenOverride === undefined ? await getToken() : tokenOverride;
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}${path}`, {
     ...init,
     headers: {
@@ -71,10 +90,31 @@ async function request<T>(
       ...(init.headers ?? {}),
     },
   });
-  if (!response.ok) {
-    throw new Error(`API request failed (${response.status})`);
-  }
+  if (!response.ok) throw new Error(`API request failed (${response.status})`);
   return (await response.json()) as T;
+}
+
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  try {
+    return await rawRequest<T>(path, init);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('(401)')) throw error;
+    const refresh = await rawRequest<{ accessToken: string }>(
+      '/auth/refresh',
+      { method: 'POST' },
+      null,
+    );
+    await setToken(refresh.accessToken);
+    return rawRequest<T>(path, init, refresh.accessToken);
+  }
+}
+
+async function readPendingQueue() {
+  const stored = await AsyncStorage.getItem(PENDING_QUEUE_KEY);
+  return stored ? (JSON.parse(stored) as Incident[]) : [];
 }
 
 export const repository = {
@@ -96,7 +136,7 @@ export const repository = {
       '/auth/login',
       { method: 'POST', body: JSON.stringify({ identifier, password }) },
     );
-    await AsyncStorage.setItem(TOKEN_KEY, response.accessToken);
+    await setToken(response.accessToken);
     return { displayName: response.displayName ?? 'MediHelp member', identifier };
   },
 
@@ -121,6 +161,66 @@ export const repository = {
       return { ...incident, incidentId: response.incidentId };
     }
     return incident;
+  },
+
+  async getIncidentStatus(incidentId: string) {
+    return request<Partial<Incident> & { status: Incident['status']; step?: number }>(
+      `/emergency/${incidentId}/status`,
+    );
+  },
+
+  async queueEmergency(incident: Incident) {
+    const queue = await readPendingQueue();
+    await AsyncStorage.setItem(
+      PENDING_QUEUE_KEY,
+      JSON.stringify([...queue.filter((item) => item.incidentId !== incident.incidentId), incident]),
+    );
+  },
+
+  async pendingEmergencyCount() {
+    return (await readPendingQueue()).length;
+  },
+
+  async drainEmergencyQueue(mode: AppMode) {
+    if (mode !== 'prod') return 0;
+    const queue = await readPendingQueue();
+    if (!queue.length) return 0;
+    const remaining: Incident[] = [];
+    for (const incident of queue) {
+      try {
+        await this.triggerEmergency(incident, mode);
+      } catch {
+        remaining.push(incident);
+      }
+    }
+    await AsyncStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(remaining));
+    return queue.length - remaining.length;
+  },
+
+  subscribeToIncident(
+    incidentId: string,
+    onMessage: (message: Partial<Incident> & { status?: Incident['status']; step?: number }) => void,
+  ) {
+    const configuredUrl = process.env.EXPO_PUBLIC_TELEMETRY_WS_URL;
+    const apiUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
+    const websocketUrl = configuredUrl
+      ? `${configuredUrl.replace(/\/$/, '')}/incident/${incidentId}/status`
+      : apiUrl
+        ? `${apiUrl.replace(/^http/, 'ws').replace(/\/$/, '')}/incident/${incidentId}/status`
+        : '';
+    if (!websocketUrl) return () => undefined;
+    const socket = new WebSocket(websocketUrl);
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ action: 'subscribe', incidentId }));
+    };
+    socket.onmessage = (event) => {
+      try {
+        onMessage(JSON.parse(event.data as string) as Partial<Incident> & { status?: Incident['status']; step?: number });
+      } catch {
+        // Ignore malformed telemetry frames; REST polling remains active as fallback.
+      }
+    };
+    return () => socket.close();
   },
 
   async saveIncident(incident: Incident) {
