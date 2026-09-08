@@ -1,9 +1,11 @@
-// Step 1 placeholder — replaced by the AppGateway (Setup ⇄ Home) in step 2.
+"use client";
+
+import AppGateway from "@/components/AppGateway";
+
+/**
+ * Single entry point. The profile lives only in the client's localStorage, so
+ * the gateway decides routing on the client: no profile → Setup, profile → Home.
+ */
 export default function Page() {
-  return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-4 p-8 text-center">
-      <h1 className="text-2xl font-bold text-red-500">MediDrone</h1>
-      <p className="text-slate-400">Scaffold ready.</p>
-    </main>
-  );
+  return <AppGateway />;
 }

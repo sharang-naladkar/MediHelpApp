@@ -9,13 +9,12 @@
  *    no offline API response and no cached data of any kind.
  */
 const CACHE_NAME = "medidrone-shell-v1";
-const SHELL_CACHE = "medidrone-shell";
 const PRECACHE = ["/", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
-      .open(SHELL_CACHE)
+      .open(CACHE_NAME)
       .then((cache) => cache.addAll(PRECACHE))
       .then(() => self.skipWaiting())
   );
@@ -28,7 +27,9 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key.startsWith(SHELL_CACHE) && key !== CACHE_NAME)
+            .filter(
+              (key) => key.startsWith("medidrone-shell-v") && key !== CACHE_NAME
+            )
             .map((key) => caches.delete(key))
         )
       )
@@ -53,7 +54,7 @@ self.addEventListener("fetch", (event) => {
         .then((response) => {
           if (response.ok) {
             const copy = response.clone();
-            caches.open(SHELL_CACHE).then((cache) => cache.put("/", copy));
+            caches.open(CACHE_NAME).then((cache) => cache.put("/", copy));
           }
           return response;
         })
@@ -74,7 +75,7 @@ self.addEventListener("fetch", (event) => {
           .then((response) => {
             if (response.ok) {
               const copy = response.clone();
-              caches.open(SHELL_CACHE).then((cache) => cache.put(request, copy));
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
             }
             return response;
           })
