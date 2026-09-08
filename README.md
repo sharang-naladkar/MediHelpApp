@@ -92,6 +92,35 @@ npm run build
 npx playwright test --config=playwright.pwa.config.ts   # prod SW/offline suite
 ```
 
+## Deploy (Vercel)
+
+`vercel.json` ships with the repo (framework `nextjs`, `npm run build`, and a
+`max-age=0, must-revalidate` header on `/sw.js` so PWA updates propagate).
+
+1. [vercel.com](https://vercel.com) → **Add New… → Project → Import Git
+   Repository** → select `sharang-naladkar/MediHelpApp`.
+2. On the import screen set:
+   - **Root Directory:** `./` (repo root)
+   - **Framework Preset:** Next.js (auto-detected)
+   - **Build Command:** `npm run build` (default)
+   - **Install Command:** `npm install` (default)
+   - **Node.js version:** 22 (default, satisfies `>=20.9.0`)
+3. **Environment Variables → Add:**
+   - `NEXT_PUBLIC_API_BASE_URL` = `https://medihelp-production-35ca.up.railway.app`
+   - Apply to **Production** (and Preview if you want staging hits the same API).
+   - *Note: `NEXT_PUBLIC_*` is inlined into the client bundle at build time —
+     after changing it, trigger a **redploy**.*
+4. **Deploy.** First build ≈ 1–2 min. The phone then opens the generated
+   `https://<project>.vercel.app` URL directly — no preview token, no sandbox.
+5. **Production branch:** the MediDrone app lives on
+   `arena/01a07f88-medihelpapp`; `main` still holds the old scaffold. Either
+   merge the open PR into `main`, or in **Settings → Git → Production Branch**
+   set `arena/01a07f88-medihelpapp` (and redeploy).
+
+Recommended after deploy: `https://<project>.vercel.app/sw.js` should return
+200 with `Cache-Control: public, max-age=0, must-revalidate`, and the
+manifest should load at `/manifest.webmanifest`.
+
 ## Connectivity verification (real backend)
 
 1. Set `NEXT_PUBLIC_API_BASE_URL` to the real URL and redeploy/rebuild.
