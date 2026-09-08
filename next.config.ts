@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Isolated .next dirs keep e2e servers from colliding with the preview dev
+  // server (Next locks the project dir per dev process, not per port).
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   async headers() {
     return [
       {

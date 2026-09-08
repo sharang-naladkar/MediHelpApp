@@ -22,5 +22,6 @@ export default defineConfig({
     url: "http://localhost:3100",
     reuseExistingServer: false,
     timeout: 240_000,
+    env: { NEXT_DIST_DIR: ".next-pwa" },
   },
 });
